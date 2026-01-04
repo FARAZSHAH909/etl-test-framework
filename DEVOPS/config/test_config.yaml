@@ -1,0 +1,95 @@
+# ETL Test Configuration
+# This file defines test expectations and configurations for AWS services
+
+s3:
+  region: us-east-1
+  bucket_name: etl-test-bucket
+  test_data_prefix: test-data/
+  required_columns:
+    - member_id
+    - status
+    - age
+    - enrollment_date
+  validation_rules:
+    max_file_size_mb: 100
+    min_rows: 1
+    required_fields:
+      member_id: "^M\\d+$"
+      status: ["ACTIVE", "TERMINATED", "SUSPENDED"]
+      age: {min: 0, max: 120}
+      enrollment_date: "^\\d{4}-\\d{2}-\\d{2}$"
+
+glue:
+  region: us-east-1
+  job_name: member-etl-job
+  database_name: member_etl_db
+  expected_output_table: cleaned_members
+  timeout_seconds: 1800
+  job_parameters:
+    input_bucket: etl-test-bucket
+    input_prefix: raw-data/
+    output_bucket: etl-test-bucket
+    output_prefix: processed-data/
+
+lambda:
+  region: us-east-1
+  validation_function: member-data-validator
+  transformation_function: member-etl-transformer
+  timeout_seconds: 60
+  expected_response_keys:
+    - statusCode
+    - body
+    - timestamp
+
+documentdb:
+  region: us-east-1
+  cluster_id: member-etl-cluster
+  database_name: member_data
+  collections:
+    - members
+    - member_history
+  expected_fields:
+    member_id: {type: "string", required: true, pattern: "^M\\d+$"}
+    status: {type: "string", required: true}
+    age: {type: "number", required: true, min: 0, max: 120}
+    enrollment_date: {type: "string", required: true}
+
+great_expectations:
+  suites:
+    - name: member_data_quality
+      expectations:
+        - column_name: member_id
+          expectations: [column_exists, not_null, regex_match]
+          pattern: "^M\\d+$"
+        - column_name: status
+          expectations: [column_exists, not_null, values_in_set]
+          valid_values: ["ACTIVE", "TERMINATED", "SUSPENDED"]
+        - column_name: age
+          expectations: [column_exists, not_null, between]
+          min_value: 0
+          max_value: 120
+        - column_name: enrollment_date
+          expectations: [column_exists, not_null]
+      min_row_count: 1
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - type: file
+      filename: logs/test_run.log
+    - type: console
+      level: DEBUG
+
+ci_cd:
+  github_actions:
+    enabled: true
+    run_on_push: true
+    run_on_pull_request: true
+    branches:
+      - main
+      - develop
+  secrets_required:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - GITHUB_TOKEN
